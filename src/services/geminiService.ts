@@ -1,7 +1,3 @@
-import { GoogleGenAI, Type } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
 export interface ScoringResult {
   overallScore: number;
   criteria: {
@@ -15,10 +11,49 @@ export interface ScoringResult {
   suggestions: string[];
 }
 
+const OPENROUTER_API_KEY = "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";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const MODEL_NAME = "google/gemini-3.1-pro-preview";
+
+async function handleOpenRouterCall(systemInstruction: string, prompt: string): Promise<string> {
+  try {
+    const body = {
+      model: MODEL_NAME,
+      messages: [
+        { role: "system", content: systemInstruction },
+        { role: "user", content: prompt }
+      ]
+    };
+
+    const response = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": window.location.origin,
+        "X-Title": "Game Design Analyzer"
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("OpenRouter API Error:", errorText);
+      throw new Error(`API Error (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error: any) {
+    console.error("API Call Error:", error);
+    throw new Error(error.message || "发生未知错误，请重试。");
+  }
+}
+
 export async function scoreGameDesign(content: string): Promise<ScoringResult> {
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: `请深度分析以下游戏设计文档或开发需求。
+  const systemInstruction = "你是一位专门从事【儿童体感游戏】设计的资深制作人。你非常了解儿童的心理和行为特征。你的评估完全聚焦于“好不好玩”、“机制是否有意思”、“核心循环是否简单清晰”。你绝对不会用成人硬核游戏或商业游戏的标准（如数值深度、付费设计）来苛求儿童游戏。所有输出均为中文。请务必返回合法的 JSON 对象。";
+  
+  const prompt = `请深度分析以下游戏设计文档或开发需求。
     
     分析维度要求（请严格按照以下维度进行评估）：
     1. 趣味性与吸引力 (Fun & Appeal): 游戏机制是否足够有趣，能否吸引儿童玩家的注意力。
@@ -39,50 +74,40 @@ export async function scoreGameDesign(content: string): Promise<ScoringResult> {
     - explanation: 详细的评分理由（不少于 100 字，请从可玩性角度出发）。
     - actionableSuggestions: 3-5 条具体的、可落地的改进建议（重点围绕提升趣味性和优化交互）。
     
-    文档内容：
-    ${content}`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          overallScore: { type: Type.NUMBER },
-          criteria: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING },
-                score: { type: Type.NUMBER },
-                feedback: { type: Type.STRING },
-                explanation: { type: Type.STRING },
-                actionableSuggestions: { 
-                  type: Type.ARRAY, 
-                  items: { type: Type.STRING }
-                },
-              },
-              required: ["name", "score", "feedback", "explanation", "actionableSuggestions"],
-            },
-          },
-          summary: { type: Type.STRING },
-          suggestions: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-          },
-        },
-        required: ["overallScore", "criteria", "summary", "suggestions"],
-      },
-      systemInstruction: "你是一位专门从事【儿童体感游戏】设计的资深制作人。你非常了解儿童的心理和行为特征。你的评估完全聚焦于“好不好玩”、“机制是否有意思”、“核心循环是否简单清晰”。你绝对不会用成人硬核游戏或商业游戏的标准（如数值深度、付费设计）来苛求儿童游戏。所有输出均为中文。",
-    },
-  });
+    请严格按照以下 JSON 格式返回结果：
+    {
+      "overallScore": 85,
+      "criteria": [
+        {
+          "name": "趣味性与吸引力",
+          "score": 90,
+          "feedback": "...",
+          "explanation": "...",
+          "actionableSuggestions": ["...", "..."]
+        }
+      ],
+      "summary": "...",
+      "suggestions": ["...", "..."]
+    }
 
-  return JSON.parse(response.text || "{}");
+    文档内容：
+    ${content}`;
+
+  const responseText = await handleOpenRouterCall(systemInstruction, prompt);
+  
+  try {
+    const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/) || responseText.match(/```\n([\s\S]*?)\n```/);
+    const jsonString = jsonMatch ? jsonMatch[1] : responseText;
+    return JSON.parse(jsonString.trim());
+  } catch (e) {
+    console.error("Failed to parse JSON:", responseText);
+    throw new Error("解析评分结果失败，请重试。");
+  }
 }
 
 export async function generateFlowchart(content: string): Promise<string> {
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: `请根据以下游戏设计文档，提取其核心逻辑流程（如核心玩法循环、用户旅程或特定系统逻辑），并生成一个 Mermaid 格式的流程图（flowchart TD）。
+  const systemInstruction = "你是一位资深的游戏系统设计师和流程架构师。你擅长将复杂的文本逻辑转化为直观、结构化且美观的流程图。请确保生成的 Mermaid 代码简洁、逻辑严密且易于阅读。";
+  const prompt = `请根据以下游戏设计文档，提取其核心逻辑流程（如核心玩法循环、用户旅程或特定系统逻辑），并生成一个 Mermaid 格式的流程图（flowchart TD）。
     
     要求：
     1. 仅输出 Mermaid 代码块内容，绝对不要包含 \`\`\`mermaid 标签或其他任何解释性文字。
@@ -93,14 +118,9 @@ export async function generateFlowchart(content: string): Promise<string> {
     6. 确保语法正确，能够被 Mermaid 渲染。
     
     文档内容：
-    ${content}`,
-    config: {
-      systemInstruction: "你是一位资深的游戏系统设计师和流程架构师。你擅长将复杂的文本逻辑转化为直观、结构化且美观的流程图。请确保生成的 Mermaid 代码简洁、逻辑严密且易于阅读。",
-    },
-  });
+    ${content}`;
 
-  let text = response.text || "";
-  // 移除可能存在的 markdown 代码块标记，以防模型未完全遵守指令
+  let text = await handleOpenRouterCall(systemInstruction, prompt);
   text = text.replace(/^```mermaid\s*/i, '').replace(/```\s*$/i, '').trim();
   return text;
 }
@@ -189,17 +209,12 @@ ${templateInstruction}
     ${content}`;
   }
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: prompt,
-    config: {
-      systemInstruction: `你是一位拥有 15 年以上经验的资深【儿童体感游戏】主策划（Lead Designer）。
+  const systemInstruction = `你是一位拥有 15 年以上经验的资深【儿童体感游戏】主策划（Lead Designer）。
       你的目标是基于初步的创意，产出一份高质量、专业级的儿童体感游戏设计文档。
       你不仅要润色文字，更要基于你的专业知识，主动发现并补充提升游戏“趣味性”和“正向反馈”的细节。
       你深知儿童游戏不需要复杂的数值和商业化，核心在于好玩和直观。
-      所有输出必须使用中文，保持严谨、专业、清晰且富有童趣和激情的行业语调。`,
-    },
-  });
+      所有输出必须使用中文，保持严谨、专业、清晰且富有童趣和激情的行业语调。`;
 
-  return response.text || "优化生成失败，请稍后重试。";
+  const text = await handleOpenRouterCall(systemInstruction, prompt);
+  return text || "优化生成失败，请稍后重试。";
 }

@@ -286,9 +286,9 @@ export default function App() {
       const scoringResult = await scoreGameDesign(content);
       setResult(scoringResult);
       saveToHistory(content, scoringResult);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('Failed to analyze the document. Please try again.');
+      setError(err.message || 'Failed to analyze the document. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -318,9 +318,9 @@ export default function App() {
     try {
       const chart = await generateFlowchart(content);
       setFlowchart(chart);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('生成流程图失败，请重试。');
+      setError(err.message || '生成流程图失败，请重试。');
     } finally {
       setGeneratingFlowchart(false);
     }
@@ -357,9 +357,9 @@ export default function App() {
         setRewriteVersions([{ content: newContent, feedback: '', timestamp: Date.now() }]);
         setActiveVersionIndex(0);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setError('优化改写失败，请重试。');
+      setError(err.message || '优化改写失败，请重试。');
     } finally {
       setRewriting(false);
     }

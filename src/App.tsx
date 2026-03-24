@@ -54,7 +54,10 @@ import {
   Copy,
   Check,
   X,
-  GitBranch
+  GitBranch,
+  MessageSquare,
+  Wand2,
+  RefreshCw
 } from 'lucide-react';
 
 export interface HistoryItem {
@@ -62,6 +65,12 @@ export interface HistoryItem {
   timestamp: number;
   content: string;
   result: ScoringResult;
+}
+
+export interface RewriteVersion {
+  content: string;
+  feedback: string;
+  timestamp: number;
 }
 
 export default function App() {
@@ -73,15 +82,19 @@ export default function App() {
   const [currentTipIndex, setCurrentTipIndex] = useState(0);
   const [currentLoadingStep, setCurrentLoadingStep] = useState(0);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [rewrittenContent, setRewrittenContent] = useState<string | null>(null);
+  const [rewriteVersions, setRewriteVersions] = useState<RewriteVersion[]>([]);
+  const [activeVersionIndex, setActiveVersionIndex] = useState<number>(-1);
+  const [rewriteFeedback, setRewriteFeedback] = useState('');
   const [rewriting, setRewriting] = useState(false);
   const [flowchart, setFlowchart] = useState<string | null>(null);
   const [generatingFlowchart, setGeneratingFlowchart] = useState(false);
   const [rewriteStrategy, setRewriteStrategy] = useState<'balanced' | 'creative' | 'technical'>('balanced');
   const [adoptedSuggestions, setAdoptedSuggestions] = useState<string[]>([]);
+  const [customTemplate, setCustomTemplate] = useState('');
+  const [useCustomTemplate, setUseCustomTemplate] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
-  const [outputFormat, setOutputFormat] = useState<'detailed' | 'summary' | 'table'>('detailed');
+  const [outputFormat, setOutputFormat] = useState<'detailed' | 'summary' | 'table' | 'template'>('detailed');
 
   const MAX_HISTORY = 5;
 
@@ -138,6 +151,12 @@ export default function App() {
     if (score >= 60) return 'text-amber-600';
     return 'text-red-600';
   };
+
+  useEffect(() => {
+    if (!useCustomTemplate && outputFormat === 'template') {
+      setOutputFormat('detailed');
+    }
+  }, [useCustomTemplate, outputFormat]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -279,7 +298,8 @@ export default function App() {
     setResult(null);
     setContent('');
     setError(null);
-    setRewrittenContent(null);
+    setRewriteVersions([]);
+    setActiveVersionIndex(-1);
     setFlowchart(null);
     setAdoptedSuggestions([]);
   };
@@ -306,12 +326,37 @@ export default function App() {
     }
   };
 
-  const handleRewrite = async () => {
+  const handleRewrite = async (isIterative = false) => {
     if (!content || !result) return;
     setRewriting(true);
     try {
-      const optimized = await rewriteGameDesign(content, result, rewriteStrategy, adoptedSuggestions);
-      setRewrittenContent(optimized);
+      let newContent = '';
+      if (isIterative && activeVersionIndex >= 0) {
+        const prevContent = rewriteVersions[activeVersionIndex].content;
+        newContent = await rewriteGameDesign(
+          content, 
+          result, 
+          rewriteStrategy, 
+          adoptedSuggestions,
+          useCustomTemplate && customTemplate.trim() ? customTemplate : undefined,
+          prevContent,
+          rewriteFeedback
+        );
+        const newVersions = [...rewriteVersions.slice(0, activeVersionIndex + 1), { content: newContent, feedback: rewriteFeedback, timestamp: Date.now() }];
+        setRewriteVersions(newVersions);
+        setActiveVersionIndex(newVersions.length - 1);
+        setRewriteFeedback('');
+      } else {
+        newContent = await rewriteGameDesign(
+          content, 
+          result, 
+          rewriteStrategy, 
+          adoptedSuggestions,
+          useCustomTemplate && customTemplate.trim() ? customTemplate : undefined
+        );
+        setRewriteVersions([{ content: newContent, feedback: '', timestamp: Date.now() }]);
+        setActiveVersionIndex(0);
+      }
     } catch (err) {
       console.error(err);
       setError('优化改写失败，请重试。');
@@ -652,7 +697,7 @@ export default function App() {
                   <div className="absolute top-0 right-0 p-4 flex items-center gap-2">
                     <div className="flex items-center bg-black/5 rounded-full p-1">
                       <button 
-                        onClick={handleRewrite}
+                        onClick={() => handleRewrite()}
                         disabled={rewriting}
                         title="优化改写文档"
                         className={cn(
@@ -754,10 +799,23 @@ export default function App() {
                               const data = payload[0].payload;
                               const scoreColor = getScoreColor(data.score);
                               return (
-                                <div className="bg-white/95 backdrop-blur-sm p-3 border border-black/5 shadow-2xl rounded-xl max-w-[200px] animate-in fade-in zoom-in duration-200">
-                                  <p className="font-bold text-xs mb-1" style={{ color: scoreColor }}>{data.name}</p>
-                                  <p className="text-xl font-bold mb-2" style={{ color: scoreColor }}>{data.score}<span className="text-[10px] text-black/20 ml-1">/100</span></p>
-                                  <p className="text-[10px] text-black/60 leading-relaxed italic">“{data.feedback}”</p>
+                                <div className="bg-white/95 backdrop-blur-sm p-4 border border-black/5 shadow-2xl rounded-2xl max-w-[280px] animate-in fade-in zoom-in duration-200">
+                                  <div className="flex justify-between items-start mb-2">
+                                    <p className="font-bold text-sm" style={{ color: scoreColor }}>{data.name}</p>
+                                    <p className="text-lg font-bold" style={{ color: scoreColor }}>{data.score}<span className="text-[10px] text-black/40 ml-1">/100</span></p>
+                                  </div>
+                                  <div className="space-y-3">
+                                    <div>
+                                      <p className="text-[10px] font-bold text-black/40 uppercase tracking-wider mb-1">简评</p>
+                                      <p className="text-xs text-black/70 leading-relaxed font-medium">“{data.feedback}”</p>
+                                    </div>
+                                    {data.explanation && (
+                                      <div>
+                                        <p className="text-[10px] font-bold text-black/40 uppercase tracking-wider mb-1">详细解析</p>
+                                        <p className="text-[11px] text-black/60 leading-relaxed">{data.explanation}</p>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               );
                             }
@@ -880,9 +938,43 @@ export default function App() {
                       </div>
                     </div>
 
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between mb-3 px-1">
+                        <p className="text-[10px] uppercase tracking-widest text-black/40 font-mono">自定义文档格式</p>
+                        <button
+                          onClick={() => setUseCustomTemplate(!useCustomTemplate)}
+                          className={cn(
+                            "text-[10px] font-medium px-2 py-1 rounded-md transition-colors",
+                            useCustomTemplate ? "bg-indigo-100 text-indigo-700" : "bg-black/5 text-black/40 hover:bg-black/10 hover:text-black/60"
+                          )}
+                        >
+                          {useCustomTemplate ? "已启用" : "未启用"}
+                        </button>
+                      </div>
+                      
+                      <AnimatePresence>
+                        {useCustomTemplate && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <textarea
+                              value={customTemplate}
+                              onChange={(e) => setCustomTemplate(e.target.value)}
+                              onFocus={() => setOutputFormat('template')}
+                              placeholder="在此粘贴您的 Markdown 标准化文档格式模板（如：包含哪些章节、特定排版要求等）..."
+                              className="w-full h-32 p-3 text-sm bg-black/[0.02] border border-black/10 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/30 transition-all placeholder:text-black/30"
+                            />
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3">
                       <button
-                        onClick={handleRewrite}
+                        onClick={() => handleRewrite()}
                         disabled={rewriting}
                         className={cn(
                           "py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.98]",
@@ -964,7 +1056,40 @@ export default function App() {
                   >
                     对比表格
                   </button>
+                  {useCustomTemplate && (
+                    <button
+                      onClick={() => setOutputFormat('template')}
+                      className={cn(
+                        "px-4 py-2 text-sm font-medium rounded-md transition-all",
+                        outputFormat === 'template' ? "bg-white text-indigo-600 shadow-sm" : "text-indigo-600/50 hover:text-indigo-600"
+                      )}
+                    >
+                      模板预览
+                    </button>
+                  )}
                 </div>
+
+                {outputFormat === 'template' && useCustomTemplate && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-white p-8 rounded-3xl border border-indigo-500/20 shadow-xl shadow-indigo-500/5 min-h-[500px]"
+                  >
+                    <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-indigo-600">
+                      <Sparkles className="w-5 h-5" />
+                      自定义模板实时预览
+                    </h3>
+                    {customTemplate.trim() ? (
+                      <div className="markdown-body text-black/80">
+                        <Markdown remarkPlugins={[remarkGfm]}>{customTemplate}</Markdown>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-64 text-black/30">
+                        <p className="text-sm">在左侧输入 Markdown 模板，这里将实时预览渲染效果</p>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
 
                 {outputFormat === 'detailed' && (
                   <>
@@ -1173,22 +1298,25 @@ export default function App() {
 
       {/* Rewritten Content Modal */}
       <AnimatePresence>
-        {rewrittenContent && (
+        {rewriteVersions.length > 0 && activeVersionIndex >= 0 && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setRewrittenContent(null)}
+              onClick={() => {
+                setRewriteVersions([]);
+                setActiveVersionIndex(-1);
+              }}
               className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             />
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-4xl max-h-[90vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+              className="relative w-full max-w-5xl max-h-[95vh] bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col"
             >
-              <div className="p-6 border-b border-black/5 flex items-center justify-between bg-white sticky top-0 z-10">
+              <div className="p-6 border-b border-black/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white sticky top-0 z-10">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600">
                     <Sparkles className="w-5 h-5" />
@@ -1198,16 +1326,40 @@ export default function App() {
                     <p className="text-xs text-black/40 font-mono">基于深度分析结果生成的专业版 GDD</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                {/* Version History */}
+                <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 max-w-full sm:max-w-[50%] scrollbar-hide">
+                  <History className="w-4 h-4 text-black/40 shrink-0" />
+                  {rewriteVersions.map((v, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setActiveVersionIndex(idx)}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-medium rounded-full whitespace-nowrap transition-all shrink-0",
+                        activeVersionIndex === idx 
+                          ? "bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-sm" 
+                          : "bg-black/5 text-black/60 hover:bg-black/10 border border-transparent"
+                      )}
+                      title={v.feedback ? `点评: ${v.feedback}` : '初始优化版本'}
+                    >
+                      版本 {idx + 1} {idx === 0 ? '(初始)' : '(迭代)'}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={() => copyToClipboard(rewrittenContent)}
+                    onClick={() => copyToClipboard(rewriteVersions[activeVersionIndex].content)}
                     className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition-colors text-sm font-medium"
                   >
                     {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                     {copied ? '已复制' : '复制全文'}
                   </button>
                   <button
-                    onClick={() => setRewrittenContent(null)}
+                    onClick={() => {
+                      setRewriteVersions([]);
+                      setActiveVersionIndex(-1);
+                    }}
                     className="p-2 hover:bg-black/5 rounded-full transition-colors text-black/40"
                   >
                     <X className="w-6 h-6" />
@@ -1217,21 +1369,53 @@ export default function App() {
               
               <div className="flex-1 overflow-y-auto p-8 prose prose-sm max-w-none prose-indigo prose-headings:font-bold prose-headings:tracking-tight prose-p:text-black/70 prose-li:text-black/70">
                 <div className="markdown-body">
-                  <Markdown remarkPlugins={[remarkGfm]}>{rewrittenContent}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm]}>{rewriteVersions[activeVersionIndex].content}</Markdown>
                 </div>
               </div>
 
-              <div className="p-6 bg-black/[0.02] border-t border-black/5 flex justify-center">
-                <button
-                  onClick={() => {
-                    setContent(rewrittenContent);
-                    setRewrittenContent(null);
-                    setResult(null); // Go back to input with new content
-                  }}
-                  className="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all active:scale-95"
-                >
-                  采用此版本并重新分析
-                </button>
+              <div className="p-6 bg-black/[0.02] border-t border-black/5 flex flex-col gap-4">
+                {/* Feedback Input for Next Iteration */}
+                <div className="space-y-3 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100">
+                  <h4 className="text-sm font-bold text-indigo-900 flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-indigo-500" />
+                    对当前版本不满意？输入点评继续优化：
+                  </h4>
+                  <textarea
+                    value={rewriteFeedback}
+                    onChange={(e) => setRewriteFeedback(e.target.value)}
+                    placeholder="例如：请把核心玩法部分写得更详细一些，加入更多关于音效的描述... (支持 Markdown 格式)"
+                    className="w-full h-20 p-3 text-sm bg-white border border-indigo-200 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all placeholder:text-black/30"
+                  />
+                  <div className="flex justify-between items-center">
+                    <p className="text-xs text-black/40">每次优化都会生成一个新版本，您可以随时切换回历史版本。</p>
+                    <button
+                      onClick={() => handleRewrite(true)}
+                      disabled={rewriting || !rewriteFeedback.trim()}
+                      className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white text-sm font-medium rounded-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-indigo-600/20"
+                    >
+                      {rewriting ? (
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Wand2 className="w-4 h-4" />
+                      )}
+                      {rewriting ? "正在深度优化..." : "基于点评再次优化"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex justify-center">
+                  <button
+                    onClick={() => {
+                      setContent(rewriteVersions[activeVersionIndex].content);
+                      setRewriteVersions([]);
+                      setActiveVersionIndex(-1);
+                      setResult(null); // Go back to input with new content
+                    }}
+                    className="px-8 py-3 bg-black text-white rounded-2xl font-bold shadow-lg hover:bg-black/80 transition-all active:scale-95"
+                  >
+                    采用此版本并重新分析
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

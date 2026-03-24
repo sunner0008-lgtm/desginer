@@ -109,7 +109,10 @@ export async function rewriteGameDesign(
   content: string, 
   analysis: ScoringResult, 
   strategy: 'balanced' | 'creative' | 'technical' = 'balanced',
-  adoptedSuggestions: string[] = []
+  adoptedSuggestions: string[] = [],
+  customTemplate?: string,
+  previousContent?: string,
+  feedback?: string
 ): Promise<string> {
   const strategyPrompts = {
     balanced: "在保持创意和可行性平衡的同时，全面提升文档质量，确保各模块发展均衡。",
@@ -121,9 +124,46 @@ export async function rewriteGameDesign(
     ? `\n    【特别注意：已采纳的改进建议】\n    请务必在改写过程中，将以下用户已采纳的建议融入到游戏设计中：\n${adoptedSuggestions.map(s => `    - ${s}`).join('\n')}\n`
     : "";
 
-  const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: `请根据之前的深度分析结果，对以下游戏设计文档进行【${strategy}】模式的专业优化改写。
+  const templateInstruction = customTemplate 
+    ? `1. 【结构标准化】：请严格按照以下提供的 Markdown 标准化文档格式进行输出，保留原有的 Markdown 标题层级和排版结构，不要遗漏任何章节：\n\n${customTemplate}\n`
+    : `1. 【结构标准化】：采用适合儿童体感游戏的 GDD 模板。必须包含以下模块：
+       - **项目概述** (一句话概念、核心卖点、目标受众年龄段)
+       - **核心玩法** (简单清晰的 Core Loop 拆解)
+       - **体感交互机制** (具体的动作输入与游戏内反馈的映射)
+       - **视听与反馈** (美术风格、音效基调、正向激励机制)
+       - **关卡与场景** (主题包装、难度递进原则)`;
+
+  let prompt = "";
+
+  if (previousContent && feedback) {
+    prompt = `你是一个资深的游戏制作人与主策划。
+我们之前已经对一份游戏设计文档进行了优化，这是上一次优化后的版本：
+
+<previous_version>
+${previousContent}
+</previous_version>
+
+现在，用户对这个版本提出了以下修改意见/点评：
+
+<user_feedback>
+${feedback}
+</user_feedback>
+
+请你基于用户的修改意见，对上面的 <previous_version> 进行再次优化和重写。
+
+【核心要求】：
+1. 必须严格落实用户的修改意见。
+2. 保留上一次版本中优秀的、未被用户否定的部分。
+3. 依然保持 Markdown 格式输出。
+${templateInstruction}
+4. 【信息完整性（极度重要）】：必须100%保留原文档中的所有设定、数据、表格内容和细节信息。你可以扩充和优化表达，但绝对不能删减、遗漏或简化原有的任何实质性内容（尤其是表格中的具体数据项）。
+
+【绝对禁止】：
+- 绝对不要删减原文档中的任何表格数据、数值设定或机制描述。
+- 绝对不要在改写中加入任何“数值系统”、“经济系统”或“商业化/付费点”的内容。
+- 绝对不要修改或质疑原文档中的“体感操作”和“生理体验”设定，直接保留并丰富其表现力即可。`;
+  } else {
+    prompt = `请根据之前的深度分析结果，对以下游戏设计文档进行【${strategy}】模式的专业优化改写。
     
     分析报告摘要：
     - 综合评分：${analysis.overallScore}/100
@@ -133,23 +173,25 @@ export async function rewriteGameDesign(
     优化策略：${strategyPrompts[strategy]}
     ${adoptedSuggestionsPrompt}
     改写要求：
-    1. 【结构标准化】：采用适合儿童体感游戏的 GDD 模板。必须包含以下模块：
-       - **项目概述** (一句话概念、核心卖点、目标受众年龄段)
-       - **核心玩法** (简单清晰的 Core Loop 拆解)
-       - **体感交互机制** (具体的动作输入与游戏内反馈的映射)
-       - **视听与反馈** (美术风格、音效基调、正向激励机制)
-       - **关卡与场景** (主题包装、难度递进原则)
+    ${templateInstruction}
     2. 【深度补强】：重点针对分析报告中得分较低的维度进行重构和逻辑填补，提升趣味性。
     3. 【细节扩充】：将模糊的描述转化为具体的机制说明。例如，不要只说“挥手攻击”，要描述“挥手时屏幕上的特效、音效以及怪物的受击反馈”。
     4. 【专业术语】：准确使用儿童游戏和体感交互术语（如：正向反馈, 动作映射, 认知负荷, 心流等）。
     5. 【排版规范】：使用清晰的 Markdown 标题层级（#、##、###）、列表、加粗和表格来增强可读性。
+    6. 【信息完整性（极度重要）】：必须100%保留原文档中的所有设定、数据、表格内容和细节信息。你可以扩充和优化表达，但绝对不能删减、遗漏或简化原有的任何实质性内容（尤其是表格中的具体数据项）。
     
     【绝对禁止】：
+    - 绝对不要删减原文档中的任何表格数据、数值设定或机制描述。
     - 绝对不要在改写中加入任何“数值系统”、“经济系统”或“商业化/付费点”的内容。
     - 绝对不要修改或质疑原文档中的“体感操作”和“生理体验”设定，直接保留并丰富其表现力即可。
     
     原文档内容：
-    ${content}`,
+    ${content}`;
+  }
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3.1-pro-preview",
+    contents: prompt,
     config: {
       systemInstruction: `你是一位拥有 15 年以上经验的资深【儿童体感游戏】主策划（Lead Designer）。
       你的目标是基于初步的创意，产出一份高质量、专业级的儿童体感游戏设计文档。
